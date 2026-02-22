@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """
 Automated Word Error Rate (WER) Benchmarking for Urdu Speech Recognition
-
-This script benchmarks Whisper model transcription accuracy on Urdu datasets
-to provide baseline metrics for Zuban's transcription quality.
+CPU-Optimized version using faster-whisper
 
 Usage:
     python scripts/evaluate_wer.py --help
@@ -15,24 +13,10 @@ import argparse
 import os
 import re
 import sys
-from pathlib import Path
 
-import torch
 from datasets import load_dataset
-from jiwer import process_words, wer
+from jiwer import process_words
 from tqdm import tqdm
-
-try:
-    import whisper
-except ImportError:
-    print("Error: openai-whisper not installed. Run: pip install openai-whisper")
-    sys.exit(1)
-
-try:
-    import soundfile as sf
-except ImportError:
-    print("Warning: soundfile not installed. Audio will be loaded via librosa.")
-    import librosa
 
 
 def preprocess_urdu_text(text: str) -> str:
@@ -41,69 +25,64 @@ def preprocess_urdu_text(text: str) -> str:
         return ""
     
     text = str(text).strip()
-    
     text = re.sub(r'\s+', ' ', text)
-    
-    text = re.sub(r'[^\w\s\u0600-\u06FF۔،؟ؤ ءآأؤإئابةتثجحخدذرزسشصضطظعغفقكلمنهوىيٱٲٳٴٵٶٷٸٹٺٻټٽپٿٹڈډڑژڙښڛڜڝڞڟڠڡڢڣڤڥڦڧڨکڪګڬڭڮڰڱڲڳڴڵڶڷڸڹںڻڼڽھڿۀہۂۃۄۅۆۇۈۉۊۋیۍێۏېۑےۓ۔ەۖۗۘۙۚۛۜ۝۞ۣ۟۠ۡۢۤۥۦۧۨ۩۪ۭ۫۬ۮۯ۰۱۲۳۴۵۶۷۸۹۝۔۔۔]',
+    text = re.sub(r'[^\w\s\u0600-\u06FF۔،؟ؤ ءآأؤإئابةتثجحخدذرزسشصضطظعغفقكلمنهوىيٱٲٳٴٵٶٷٸٹٺٻټٽپٿٹڈډڑژڙښڛڜڝڞڟڠڡڢڣڤڥڦڧڨکڪګڬڭڮڰڱڲڳڴڵڶڷڸڹںڻڼڽھڿۀہۂۃۄۅۆۇۈۉۊۋیۍێۏېۑےۓ۔ەۖۗۘۙۚۛۜ۝۞ۣ۟۠ۡۢۤۥۦۧۨ۩۪ۭ۫۬ۮۯ۰۱۲۳۴۵۶۷۸۹۝۔۔۔]',
                   '', text)
     
     return text.strip()
 
 
-def load_audio(path: str) -> tuple:
-    """Load audio file and return waveform and sample rate."""
+def load_model(model_size: str, compute_type: str = "int8"):
+    """Load faster-whisper model (CPU-optimized)."""
     try:
-        import soundfile as sf
-        audio, sr = sf.read(path)
-        return audio, sr
+        from faster_whisper import WhisperModel
     except ImportError:
-        import librosa
-        audio, sr = librosa.load(path, sr=16000)
-        return audio, sr
+        print("Error: faster-whisper not installed. Run: pip install faster-whisper")
+        sys.exit(1)
+    
+    print(f"Loading faster-whisper {model_size} (compute_type={compute_type}) on CPU...")
+    model = WhisperModel(model_size, device="cpu", compute_type=compute_type)
+    return model
 
 
-def transcribe_audio(model, audio_path: str, device: str = "cuda" if torch.cuda.is_available() else "cpu") -> str:
-    """Transcribe audio file using Whisper."""
+def transcribe_audio(model, audio_path: str) -> str:
+    """Transcribe audio file using faster-whisper."""
     try:
-        result = model.transcribe(audio_path, language="ur", fp16=(device == "cuda"))
-        return result["text"].strip()
+        segments, info = model.transcribe(audio_path, language="ur", beam_size=1)
+        text = " ".join([seg.text.strip() for seg in segments])
+        return text
     except Exception as e:
         print(f"Error transcribing {audio_path}: {e}")
         return ""
 
 
-def load_whisper_model(model_size: str, device: str = "cuda" if torch.cuda.is_available() else "cpu"):
-    """Load Whisper model."""
-    print(f"Loading Whisper {model_size} model on {device}...")
-    model = whisper.load_model(model_size, device=device)
-    return model
-
-
 def load_urdu_dataset(limit: int = None):
-    """Load Urdu dataset from Hugging Face."""
-    print("Loading Common Voice Urdu dataset...")
+    """Load Urdu dataset from Hugging Face (smaller datasets for CPU)."""
+    print("Loading Urdu dataset...")
     
     datasets_to_try = [
+        ("humair025/UrduSpeech-IndicVoices-ST-kProcessed", "train"),
+        ("Talha185/Common-voice-urdu-11", "train"),
         ("mozilla-foundation/common_voice_17_0", "ur", "train"),
-        ("mozilla-foundation/common_voice_17_0", "ur", "test"),
-        ("kmeaw/common-voice-urdu", "train"),
-        ("kmeaw/common-voice-urdu", "test"),
     ]
     
-    for ds_name, *split_info in datasets_to_try:
+    for ds_config in datasets_to_try:
         try:
-            print(f"Trying dataset: {ds_name}, split: {split_info}")
-            if len(split_info) == 1:
-                dataset = load_dataset(ds_name, split=split_info[0])
+            ds_name = ds_config[0]
+            print(f"Trying dataset: {ds_name}...")
+            
+            if len(ds_config) == 2:
+                dataset = load_dataset(ds_name, split=ds_config[1])
             else:
-                dataset = load_dataset(ds_name, lang=split_info[0], split=split_info[1])
-            print(f"Successfully loaded {ds_name}")
+                dataset = load_dataset(ds_name, lang=ds_config[1], split=ds_config[2])
+            
+            print(f"Successfully loaded {ds_name}: {len(dataset)} samples")
             break
         except Exception as e:
-            print(f"Failed to load {ds_name}: {e}")
+            print(f"Failed to load {ds_config[0]}: {e}")
             continue
     else:
-        print("All datasets failed to load. Using synthetic test data.")
+        print("All datasets failed. Using synthetic test data.")
         return None
     
     if limit:
@@ -119,19 +98,13 @@ def calculate_wer(references: list, hypotheses: list) -> dict:
     hyp_processed = [preprocess_urdu_text(h) for h in hypotheses]
     
     ref_filtered = [r for r in ref_processed if r]
-    hyp_filtered = []
-    idx_map = []
-    for i, r in enumerate(ref_processed):
-        if r:
-            hyp_filtered.append(hyp_processed[i])
-            idx_map.append(i)
+    hyp_filtered = [hyp_processed[i] for i, r in enumerate(ref_processed) if r]
     
     if not ref_filtered:
         return {"wer": 0.0, "substitutions": 0, "deletions": 0, "insertions": 0, "total_words": 0}
     
     try:
         output = process_words(ref_filtered, hyp_filtered)
-        
         return {
             "wer": output.wer * 100,
             "substitutions": output.substitutions,
@@ -144,33 +117,23 @@ def calculate_wer(references: list, hypotheses: list) -> dict:
         return {"wer": 0.0, "substitutions": 0, "deletions": 0, "insertions": 0, "total_words": 0}
 
 
-def run_benchmark(model_size: str = "base", limit: int = None, device: str = None):
-    """Run WER benchmark on Urdu dataset."""
-    if device is None:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-    
+def run_benchmark(model_size: str = "small", limit: int = None, compute_type: str = "int8"):
+    """Run WER benchmark on Urdu dataset (CPU-optimized)."""
     print(f"\n{'='*60}")
-    print(f"WER Benchmark for Urdu Speech Recognition")
+    print(f"WER Benchmark for Urdu Speech Recognition (CPU)")
     print(f"{'='*60}")
     print(f"Model: whisper-{model_size}")
-    print(f"Device: {device}")
+    print(f"Compute type: {compute_type}")
     print(f"Samples: {limit if limit else 'all'}")
     print(f"{'='*60}\n")
     
-    model = load_whisper_model(model_size, device)
-    
+    model = load_model(model_size, compute_type)
     dataset = load_urdu_dataset(limit)
     
     if dataset is None:
-        print("Using synthetic test data for demonstration...")
-        synthetic_samples = [
-            {"text": "یہ ایک جانچ ہے", "audio": None},
-            {"text": "اردو بہت حسین زبان ہے", "audio": None},
-            {"text": "میں پاکستان سے ہوں", "audio": None},
-        ]
-        dataset = [{"text": s["text"]} for s in synthetic_samples]
-        print("Note: Running transcription demo without actual audio.")
-        print("To run full benchmark, please ensure internet connection for dataset download.")
+        print("Note: Dataset loading failed. Please check internet connection.")
+        print("For CPU testing, use smaller models like --model tiny or --model base")
+        return
     
     references = []
     hypotheses = []
@@ -184,29 +147,30 @@ def run_benchmark(model_size: str = "base", limit: int = None, device: str = Non
                 if isinstance(audio_data, dict) and "array" in audio_data:
                     import tempfile
                     import numpy as np
+                    import soundfile as sf
                     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                        sf.write(tmp.name, audio_data["array"], audio_data["sample_rate"])
+                        sf.write(tmp.name, audio_data["array"].astype(np.float32), audio_data.get("sampling_rate", 16000))
                         audio_path = tmp.name
+                    temp_file = tmp.name
                 else:
                     audio_path = audio_data
-            elif "file" in item:
-                audio_path = item["file"]
+                    temp_file = None
             else:
-                print(f"Sample {idx}: No audio file found, skipping")
+                print(f"Sample {idx}: No audio field, skipping")
                 continue
             
-            reference = item.get("sentence", item.get("text", ""))
+            reference = item.get("sentence", item.get("text", item.get("transcript", "")))
             if not reference:
                 continue
             
-            hypothesis = transcribe_audio(model, audio_path, device)
+            hypothesis = transcribe_audio(model, audio_path)
             
             references.append(reference)
             hypotheses.append(hypothesis)
             
-            if isinstance(audio_path, str) and audio_path.endswith(".wav") and "tempfile" in locals():
+            if temp_file and os.path.exists(temp_file):
                 try:
-                    os.unlink(audio_path)
+                    os.unlink(temp_file)
                 except:
                     pass
                     
@@ -217,7 +181,7 @@ def run_benchmark(model_size: str = "base", limit: int = None, device: str = Non
     print(f"\nProcessed {len(references)} samples")
     
     if not references:
-        print("No samples processed successfully!")
+        print("No samples processed!")
         return
     
     metrics = calculate_wer(references, hypotheses)
@@ -244,41 +208,49 @@ def run_benchmark(model_size: str = "base", limit: int = None, device: str = Non
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Automated WER Benchmarking for Urdu Speech Recognition",
+        description="WER Benchmark for Urdu Speech Recognition (CPU-Optimized)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   python scripts/evaluate_wer.py --help
   python scripts/evaluate_wer.py --limit 5
   python scripts/evaluate_wer.py --model small --limit 10
-  python scripts/evaluate_wer.py --model medium --limit 50
-  python scripts/evaluate_wer.py --model base --device cpu
+  python scripts/evaluate_wer.py --model base --compute-type int8
+  python scripts/evaluate_wer.py --model tiny --limit 5
 
-Available models: tiny, base, small, medium, large, large-v2, large-v3
-        """
+CPU-Optimized models (recommended for CPU):
+  - tiny: Fastest, ~6s per minute audio
+  - base: Quick, ~18s per minute audio
+  - small: Best balance, ~36s per minute audio (recommended)
+  - medium: Better accuracy, ~90s per minute audio
+
+Compute types (for CPU speed):
+  - int8: 2-3x faster, minimal accuracy loss (recommended)
+  - float16: Standard, moderate speed
+"""
     )
     
     parser.add_argument(
         "--model", "-m",
         type=str,
-        default="base",
-        choices=["tiny", "base", "small", "medium", "large", "large-v2", "large-v3"],
-        help="Whisper model size (default: base)"
+        default="small",
+        choices=["tiny", "base", "small", "medium", "large-v2", "large-v3", "large-v3-turbo"],
+        help="Whisper model size (default: small - best for CPU)"
     )
     
     parser.add_argument(
         "--limit", "-l",
         type=int,
         default=None,
-        help="Limit number of samples to process (default: all)"
+        help="Limit number of samples (default: all)"
     )
     
     parser.add_argument(
-        "--device", "-d",
+        "--compute-type", "-c",
         type=str,
-        default=None,
-        choices=["cuda", "cpu"],
-        help="Device to use (default: cuda if available, else cpu)"
+        default="int8",
+        choices=["int8", "int8_float16", "float16"],
+        help="Compute type for CPU optimization (default: int8)"
     )
     
     args = parser.parse_args()
@@ -286,7 +258,7 @@ Available models: tiny, base, small, medium, large, large-v2, large-v3
     run_benchmark(
         model_size=args.model,
         limit=args.limit,
-        device=args.device
+        compute_type=args.compute_type
     )
 
 

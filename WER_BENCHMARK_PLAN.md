@@ -1,50 +1,60 @@
 # Automated WER Benchmarking for Urdu Datasets
 
-## Updated Implementation Plan v2
+## Updated Implementation Plan v3 - CPU Optimized
 
-Based on comprehensive research of the zuban codebase and Urdu ASR benchmarking best practices.
+Based on comprehensive research for CPU-only environments (no GPU).
 
 ---
 
 ## 1. Overview
 
-This plan outlines creating an automated Python script to benchmark Whisper model's transcription accuracy (Word Error Rate - WER) on Urdu datasets. This provides a baseline metric for Zuban's transcription quality.
+This plan outlines creating an automated Python script to benchmark Whisper model's transcription accuracy (Word Error Rate - WER) on Urdu datasets for CPU-only environments.
 
 ---
 
-## 2. Research Findings
+## 2. Research Findings (CPU-Optimized)
 
-### 2.1 Best Urdu Speech Datasets
+### 2.1 Best CPU-Optimized Whisper Implementation
 
-| Dataset | Size | URL | Notes |
-|---------|------|-----|-------|
-| **UrduMegaSpeech-1M** | 1M+ samples | humair025/UrduMegaSpeech | Large-scale with quality metrics |
-| **Urdu-ONYX-WAV** | 100K-1M | humair025/Urdu-ONYX-WAV | High-quality TTS/ASR |
-| **Common Voice 17_0** | Standard | mozilla-foundation/common_voice_17_0 | Standard benchmark |
-| **UrduSpeech** | 10K-100K | humairawan/UrduSpeech | CC-BY-4.0 license |
+**faster-whisper (CTranslate2)** is recommended for CPU:
+- **4x faster** than OpenAI Whisper
+- **~50% less memory** usage
+- Supports **int8 quantization** for 2-3x additional speedup
+- URL: https://github.com/SYSTRAN/faster-whisper
 
-### 2.2 Fine-tuned Whisper Models for Urdu
+### 2.2 Best Urdu Whisper Models for CPU
+
+| Model | WER | CPU Speed | Recommended |
+|-------|-----|-----------|-------------|
+| **whisper-large-v3-turbo** (fine-tuned) | 25.78% | ~120s/min | Best accuracy |
+| **whisper-large-v3-turbo** (base) | ~26% | ~120s/min | Good balance |
+| **whisper-small** | ~33% | ~36s/min | **Fastest** |
+| **whisper-base** | ~53% | ~18s/min | Quick testing |
+
+### 2.3 Fine-tuned Urdu Models
 
 | Model | WER | URL |
 |-------|-----|-----|
-| **kingabzpro/whisper-large-v3-urdu** | 21.47% | huggingface.co/kingabzpro/whisper-large-v3-urdu |
 | **kingabzpro/whisper-large-v3-turbo-urdu** | 25.78% | huggingface.co/kingabzpro/whisper-large-v3-turbo-urdu |
-| **HowMannyMore/whisper-small-urdu** | 33.31% | huggingface.co/HowMannyMore/whisper-small-urdu |
+| **kingabzpro/whisper-large-v3-urdu** | 21.47% | huggingface.co/kingabzpro/whisper-large-v3-urdu |
 
-### 2.3 Benchmark Baselines (COLING 2025)
+### 2.4 Best Datasets for CPU
 
-| Model | WER (%) | Notes |
-|-------|---------|-------|
-| Whisper Large v3 (fine-tuned) | 21-26% | Best results |
-| Whisper Small (no fine-tuning) | ~33% | Good baseline |
-| Whisper Base (no fine-tuning) | ~53% | Lightweight |
-| Whisper Tiny (no fine-tuning) | ~67% | Quick testing |
+| Dataset | Size | Samples | URL |
+|---------|------|---------|-----|
+| **UrduSpeech-IndicVoices-ST-kProcessed** | 31.7 MB | 20K | humair025/UrduSpeech-IndicVoices-ST-kProcessed |
+| **Common Voice Urdu 11** | ~2-3 GB | 10K | Talha185/Common-voice-urdu-11 |
+| **common-voice-urdu-processed** | ~1.85 GB | 13.5K | UmarRamzan/common-voice-urdu-processed |
 
-### 2.4 Implementation Recommendations
+### 2.5 CPU Performance Benchmarks
 
-- **Use faster-whisper**: 4x faster, ~50% less memory, same accuracy
-- **Preprocessing**: Use urduhack for Urdu text normalization
-- **WER + CER**: Report both Word and Character Error Rate
+| Model | Time per 1min audio | Memory (int8) |
+|-------|---------------------|---------------|
+| tiny | ~6s | ~500MB |
+| base | ~18s | ~800MB |
+| **small** | **~36s** | **~1GB** |
+| medium | ~90s | ~2GB |
+| large-v3-turbo | ~120s | ~3GB |
 
 ---
 
@@ -53,27 +63,23 @@ This plan outlines creating an automated Python script to benchmark Whisper mode
 ### 3.1 Dependencies
 
 ```
-openai-whisper
 faster-whisper
 datasets
 jiwer
 soundfile
 librosa
-torch
 tqdm
-urduhack
 ```
 
-### 3.2 Key Features
+### 3.2 Key Features (CPU-Optimized)
 
-1. Auto-download Urdu dataset from Hugging Face
-2. Load Whisper model (configurable)
-3. Transcribe audio samples
-4. Compare with ground truth
-5. Calculate WER with Urdu preprocessing
-6. Support --limit for small test runs
-7. Support --model to specify Whisper model size
-8. JSON/CSV export for result tracking
+1. Use **faster-whisper** instead of openai-whisper
+2. **int8 quantization** by default for CPU speed
+3. Load smaller Urdu datasets for quick testing
+4. Configurable model sizes (tiny/base/small)
+5. WER calculation with Urdu preprocessing
+6. --limit for testing with small samples
+7. --model and --compute-type options
 
 ---
 
@@ -93,35 +99,32 @@ scripts/
 # Help
 python scripts/evaluate_wer.py --help
 
-# Quick test (5 samples)
+# Quick test (5 samples) - CPU optimized
 python scripts/evaluate_wer.py --limit 5
 
-# Full benchmark
-python scripts/evaluate_wer.py
-
-# Specific model
+# Using small model (fastest)
 python scripts/evaluate_wer.py --model small
+
+# Using int8 for faster CPU
+python scripts/evaluate_wer.py --compute-type int8
+
+# Full benchmark with turbo model
+python scripts/evaluate_wer.py --model large-v3-turbo
 ```
 
 ---
 
 ## 6. Verification
 
-### 5.1 Automated Tests
-- [x] Script runs without syntax errors: `python scripts/evaluate_wer.py --help`
-- [ ] Run on small subset: `python scripts/evaluate_wer.py --limit 5`
-- [ ] Verify WER is within expected range
-
-### 5.2 Manual Verification
-- Review transcripts for reasonableness
-- Confirm WER percentage is within expected range
+- [x] Script runs: `python scripts/evaluate_wer.py --help`
+- [ ] Run small test: `python scripts/evaluate_wer.py --limit 5`
+- [ ] Verify WER within expected range (25-35%)
 
 ---
 
 ## 7. References
 
-- WER We Stand Paper: https://arxiv.org/html/2409.11252v1
-- jiwer library: https://pypi.org/project/jiwer/
-- urduhack: https://urduhack.readthedocs.io/
 - faster-whisper: https://github.com/SYSTRAN/faster-whisper
-- Fine-tuned Urdu Whisper: https://huggingface.co/kingabzpro/whisper-large-v3-urdu
+- Fine-tuned Urdu: https://huggingface.co/kingabzpro/whisper-large-v3-turbo-urdu
+- Dataset: https://huggingface.co/datasets/humair025/UrduSpeech-IndicVoices-ST-kProcessed
+- jiwer: https://pypi.org/project/jiwer/
