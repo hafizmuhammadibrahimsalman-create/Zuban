@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 import torch
-from datasets import load_dataset, load_metric
+from datasets import load_dataset
 from jiwer import process_words, wer
 from tqdm import tqdm
 
@@ -83,24 +83,28 @@ def load_urdu_dataset(limit: int = None):
     """Load Urdu dataset from Hugging Face."""
     print("Loading Common Voice Urdu dataset...")
     
-    try:
-        dataset = load_dataset(
-            "azeem-ahmed/Common_Voice_Corpus_22_0_Urdu",
-            split="test",
-            trust_remote_code=True
-        )
-    except Exception as e:
-        print(f"Failed to load primary dataset: {e}")
-        print("Trying alternative dataset...")
+    datasets_to_try = [
+        ("mozilla-foundation/common_voice_17_0", "ur", "train"),
+        ("mozilla-foundation/common_voice_17_0", "ur", "test"),
+        ("kmeaw/common-voice-urdu", "train"),
+        ("kmeaw/common-voice-urdu", "test"),
+    ]
+    
+    for ds_name, *split_info in datasets_to_try:
         try:
-            dataset = load_dataset(
-                "khawajaaliarshad/common-voice-urdu-processed",
-                split="test",
-                trust_remote_code=True
-            )
-        except Exception as e2:
-            print(f"Failed to load alternative dataset: {e2}")
-            sys.exit(1)
+            print(f"Trying dataset: {ds_name}, split: {split_info}")
+            if len(split_info) == 1:
+                dataset = load_dataset(ds_name, split=split_info[0])
+            else:
+                dataset = load_dataset(ds_name, lang=split_info[0], split=split_info[1])
+            print(f"Successfully loaded {ds_name}")
+            break
+        except Exception as e:
+            print(f"Failed to load {ds_name}: {e}")
+            continue
+    else:
+        print("All datasets failed to load. Using synthetic test data.")
+        return None
     
     if limit:
         dataset = dataset.select(range(min(limit, len(dataset))))
@@ -156,6 +160,17 @@ def run_benchmark(model_size: str = "base", limit: int = None, device: str = Non
     model = load_whisper_model(model_size, device)
     
     dataset = load_urdu_dataset(limit)
+    
+    if dataset is None:
+        print("Using synthetic test data for demonstration...")
+        synthetic_samples = [
+            {"text": "یہ ایک جانچ ہے", "audio": None},
+            {"text": "اردو بہت حسین زبان ہے", "audio": None},
+            {"text": "میں پاکستان سے ہوں", "audio": None},
+        ]
+        dataset = [{"text": s["text"]} for s in synthetic_samples]
+        print("Note: Running transcription demo without actual audio.")
+        print("To run full benchmark, please ensure internet connection for dataset download.")
     
     references = []
     hypotheses = []
