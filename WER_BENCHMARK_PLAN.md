@@ -1,6 +1,6 @@
 # Automated WER Benchmarking for Urdu Datasets
 
-## Updated Implementation Plan
+## Updated Implementation Plan v2
 
 Based on comprehensive research of the zuban codebase and Urdu ASR benchmarking best practices.
 
@@ -16,26 +16,35 @@ This plan outlines creating an automated Python script to benchmark Whisper mode
 
 ### 2.1 Best Urdu Speech Datasets
 
-| Dataset | Description | Recommended For |
-|---------|-------------|-----------------|
-| `azeem-ahmed/Common_Voice_Corpus_22_0_Urdu` | Common Voice 22.0 Urdu subset | Primary benchmark |
-| `khawajaaliarshad/common-voice-urdu-processed` | Processed Common Voice Urdu | Training/evaluation |
-| `muhammadsaadgondal/urdu-tts` | Urdu TTS with transcriptions | Additional testing |
+| Dataset | Size | URL | Notes |
+|---------|------|-----|-------|
+| **UrduMegaSpeech-1M** | 1M+ samples | humair025/UrduMegaSpeech | Large-scale with quality metrics |
+| **Urdu-ONYX-WAV** | 100K-1M | humair025/Urdu-ONYX-WAV | High-quality TTS/ASR |
+| **Common Voice 17_0** | Standard | mozilla-foundation/common_voice_17_0 | Standard benchmark |
+| **UrduSpeech** | 10K-100K | humairawan/UrduSpeech | CC-BY-4.0 license |
 
-### 2.2 Benchmark Baselines (COLING 2025)
+### 2.2 Fine-tuned Whisper Models for Urdu
 
-| Model | WER (%) | Dataset |
-|-------|---------|---------|
-| Whisper Large v3 (fine-tuned) | 2.29 | Common Voice 17.0 |
-| Whisper Small (no fine-tuning) | 33.68 | Curated |
-| Whisper Base (no fine-tuning) | 53.67 | Curated |
-| Whisper Tiny (no fine-tuning) | 67.08 | Curated |
+| Model | WER | URL |
+|-------|-----|-----|
+| **kingabzpro/whisper-large-v3-urdu** | 21.47% | huggingface.co/kingabzpro/whisper-large-v3-urdu |
+| **kingabzpro/whisper-large-v3-turbo-urdu** | 25.78% | huggingface.co/kingabzpro/whisper-large-v3-turbo-urdu |
+| **HowMannyMore/whisper-small-urdu** | 33.31% | huggingface.co/HowMannyMore/whisper-small-urdu |
 
-### 2.3 Recommended Whisper Models
+### 2.3 Benchmark Baselines (COLING 2025)
 
-- **Production**: `whisper-large-v3` or fine-tuned `kingabzpro/whisper-large-v3-urdu`
-- **Balanced**: `whisper-medium` or `whisper-small`
-- **Quick testing**: `whisper-base`
+| Model | WER (%) | Notes |
+|-------|---------|-------|
+| Whisper Large v3 (fine-tuned) | 21-26% | Best results |
+| Whisper Small (no fine-tuning) | ~33% | Good baseline |
+| Whisper Base (no fine-tuning) | ~53% | Lightweight |
+| Whisper Tiny (no fine-tuning) | ~67% | Quick testing |
+
+### 2.4 Implementation Recommendations
+
+- **Use faster-whisper**: 4x faster, ~50% less memory, same accuracy
+- **Preprocessing**: Use urduhack for Urdu text normalization
+- **WER + CER**: Report both Word and Character Error Rate
 
 ---
 
@@ -45,34 +54,30 @@ This plan outlines creating an automated Python script to benchmark Whisper mode
 
 ```
 openai-whisper
+faster-whisper
 datasets
 jiwer
-urduhack
 soundfile
 librosa
 torch
+tqdm
+urduhack
 ```
 
-### 3.2 Key Considerations for Urdu WER
+### 3.2 Key Features
 
-1. **Text Preprocessing**: Use `urduhack` for normalization (Arabic to Urdu character conversion, diacritics removal)
-2. **Unicode Range**: Handle `\u0600-\u06FF` (Arabic script)
-3. **Whitespace**: Normalize all whitespace to single spaces
-4. **Punctuation**: Handle Urdu-specific punctuation (۔،؟)
-
-### 3.3 Script Features
-
-- Auto-download Urdu dataset from Hugging Face
-- Load Whisper model (configurable: tiny/base/small/medium/large)
-- Transcribe audio samples
-- Compare with ground truth transcriptions
-- Calculate overall WER with detailed metrics
-- Support `--limit` for small test runs
-- Support `--model` to specify Whisper model size
+1. Auto-download Urdu dataset from Hugging Face
+2. Load Whisper model (configurable)
+3. Transcribe audio samples
+4. Compare with ground truth
+5. Calculate WER with Urdu preprocessing
+6. Support --limit for small test runs
+7. Support --model to specify Whisper model size
+8. JSON/CSV export for result tracking
 
 ---
 
-## 4. Files to Create
+## 4. Files
 
 ```
 scripts/
@@ -82,9 +87,8 @@ scripts/
 
 ---
 
-## 5. Verification Plan
+## 5. Usage
 
-### 5.1 Automated Tests
 ```bash
 # Help
 python scripts/evaluate_wer.py --help
@@ -94,18 +98,30 @@ python scripts/evaluate_wer.py --limit 5
 
 # Full benchmark
 python scripts/evaluate_wer.py
-```
 
-### 5.2 Manual Verification
-- Review transcripts for reasonableness
-- Confirm WER percentage is within expected range (30-50% for base models)
-- Verify selected dataset provides high-quality ground truth
+# Specific model
+python scripts/evaluate_wer.py --model small
+```
 
 ---
 
-## 6. References
+## 6. Verification
 
-- WER We Stand Paper: https://arxiv.org/abs/2409.11252
+### 5.1 Automated Tests
+- [x] Script runs without syntax errors: `python scripts/evaluate_wer.py --help`
+- [ ] Run on small subset: `python scripts/evaluate_wer.py --limit 5`
+- [ ] Verify WER is within expected range
+
+### 5.2 Manual Verification
+- Review transcripts for reasonableness
+- Confirm WER percentage is within expected range
+
+---
+
+## 7. References
+
+- WER We Stand Paper: https://arxiv.org/html/2409.11252v1
 - jiwer library: https://pypi.org/project/jiwer/
 - urduhack: https://urduhack.readthedocs.io/
+- faster-whisper: https://github.com/SYSTRAN/faster-whisper
 - Fine-tuned Urdu Whisper: https://huggingface.co/kingabzpro/whisper-large-v3-urdu
