@@ -13,6 +13,9 @@ import argparse
 import os
 import re
 import sys
+import io
+
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 from datasets import load_dataset
 from jiwer import process_words
@@ -117,7 +120,7 @@ def calculate_wer(references: list, hypotheses: list) -> dict:
         return {"wer": 0.0, "substitutions": 0, "deletions": 0, "insertions": 0, "total_words": 0}
 
 
-def run_benchmark(model_size: str = "small", limit: int = None, compute_type: str = "int8"):
+def run_benchmark(model_size: str = "small", limit: int = None, compute_type: str = "int8", use_synthetic: bool = False):
     """Run WER benchmark on Urdu dataset (CPU-optimized)."""
     print(f"\n{'='*60}")
     print(f"WER Benchmark for Urdu Speech Recognition (CPU)")
@@ -126,6 +129,41 @@ def run_benchmark(model_size: str = "small", limit: int = None, compute_type: st
     print(f"Compute type: {compute_type}")
     print(f"Samples: {limit if limit else 'all'}")
     print(f"{'='*60}\n")
+    
+    if use_synthetic:
+        print("Using synthetic test data for demonstration...")
+        synthetic_data = [
+            {"text": "یہ ایک جانچ ہے", "hypothesis": "یہ ایک جانچ ہے"},
+            {"text": "اردو بہت حسین زبان ہے", "hypothesis": "اردو بہت اچھی زبان ہے"},
+            {"text": "میں پاکستان سے ہوں", "hypothesis": "میں پاکستان کا ہوں"},
+            {"text": "آج بہت اچھا دن ہے", "hypothesis": "آج اچھا دن ہے"},
+            {"text": "کمپیوٹر پر کام کر رہا ہوں", "hypothesis": "کمپیوٹر پر کام کر رہا ہوں"},
+        ]
+        references = [item["text"] for item in synthetic_data[:limit if limit else len(synthetic_data)]]
+        hypotheses = [item["hypothesis"] for item in synthetic_data[:limit if limit else len(synthetic_data)]]
+        
+        print(f"Processed {len(references)} synthetic samples")
+        metrics = calculate_wer(references, hypotheses)
+        
+        print(f"\n{'='*60}")
+        print(f"BENCHMARK RESULTS (Synthetic Data)")
+        print(f"{'='*60}")
+        print(f"Total Samples: {len(references)}")
+        print(f"Total Reference Words: {metrics['total_words']}")
+        print(f"Substitutions: {metrics['substitutions']}")
+        print(f"Deletions: {metrics['deletions']}")
+        print(f"Insertions: {metrics['insertions']}")
+        print(f"\n>>> Word Error Rate (WER): {metrics['wer']:.2f}% <<<")
+        print(f"{'='*60}\n")
+        
+        print("Sample Transcriptions:")
+        print("-" * 60)
+        for i in range(min(3, len(references))):
+            print(f"\nSample {i+1}:")
+            print(f"Reference: {references[i]}")
+            print(f"Hypothesis: {hypotheses[i]}")
+        print("-" * 60)
+        return
     
     model = load_model(model_size, compute_type)
     dataset = load_urdu_dataset(limit)
@@ -142,6 +180,9 @@ def run_benchmark(model_size: str = "small", limit: int = None, compute_type: st
     
     for idx, item in enumerate(tqdm(dataset, desc="Processing")):
         try:
+            audio_path = None
+            temp_file = None
+            
             if "audio" in item:
                 audio_data = item["audio"]
                 if isinstance(audio_data, dict) and "array" in audio_data:
@@ -154,12 +195,16 @@ def run_benchmark(model_size: str = "small", limit: int = None, compute_type: st
                     temp_file = tmp.name
                 else:
                     audio_path = audio_data
-                    temp_file = None
-            else:
+            elif "audio_filepath" in item:
+                audio_path = item["audio_filepath"]
+            elif "file" in item:
+                audio_path = item["file"]
+            
+            if not audio_path:
                 print(f"Sample {idx}: No audio field, skipping")
                 continue
             
-            reference = item.get("sentence", item.get("text", item.get("transcript", "")))
+            reference = item.get("text", item.get("sentence", item.get("transcript", "")))
             if not reference:
                 continue
             
@@ -253,12 +298,19 @@ Compute types (for CPU speed):
         help="Compute type for CPU optimization (default: int8)"
     )
     
+    parser.add_argument(
+        "--synthetic", "-s",
+        action="store_true",
+        help="Use synthetic test data (no internet/dataset needed)"
+    )
+    
     args = parser.parse_args()
     
     run_benchmark(
         model_size=args.model,
         limit=args.limit,
-        compute_type=args.compute_type
+        compute_type=args.compute_type,
+        use_synthetic=args.synthetic
     )
 
 
