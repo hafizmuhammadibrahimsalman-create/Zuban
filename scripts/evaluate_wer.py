@@ -17,7 +17,6 @@ import io
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-from datasets import load_dataset
 from jiwer import process_words
 from tqdm import tqdm
 
@@ -51,48 +50,13 @@ def load_model(model_size: str, compute_type: str = "int8"):
 def transcribe_audio(model, audio_path: str) -> str:
     """Transcribe audio file using faster-whisper."""
     try:
+        from faster_whisper import WhisperModel
         segments, info = model.transcribe(audio_path, language="ur", beam_size=1)
         text = " ".join([seg.text.strip() for seg in segments])
         return text
     except Exception as e:
         print(f"Error transcribing {audio_path}: {e}")
         return ""
-
-
-def load_urdu_dataset(limit: int = None):
-    """Load Urdu dataset from Hugging Face (smaller datasets for CPU)."""
-    print("Loading Urdu dataset...")
-    
-    datasets_to_try = [
-        ("humair025/UrduSpeech-IndicVoices-ST-kProcessed", "train"),
-        ("Talha185/Common-voice-urdu-11", "train"),
-        ("mozilla-foundation/common_voice_17_0", "ur", "train"),
-    ]
-    
-    for ds_config in datasets_to_try:
-        try:
-            ds_name = ds_config[0]
-            print(f"Trying dataset: {ds_name}...")
-            
-            if len(ds_config) == 2:
-                dataset = load_dataset(ds_name, split=ds_config[1])
-            else:
-                dataset = load_dataset(ds_name, lang=ds_config[1], split=ds_config[2])
-            
-            print(f"Successfully loaded {ds_name}: {len(dataset)} samples")
-            break
-        except Exception as e:
-            print(f"Failed to load {ds_config[0]}: {e}")
-            continue
-    else:
-        print("All datasets failed. Using synthetic test data.")
-        return None
-    
-    if limit:
-        dataset = dataset.select(range(min(limit, len(dataset))))
-    
-    print(f"Loaded {len(dataset)} samples")
-    return dataset
 
 
 def calculate_wer(references: list, hypotheses: list) -> dict:
@@ -120,7 +84,7 @@ def calculate_wer(references: list, hypotheses: list) -> dict:
         return {"wer": 0.0, "substitutions": 0, "deletions": 0, "insertions": 0, "total_words": 0}
 
 
-def run_benchmark(model_size: str = "small", limit: int = None, compute_type: str = "int8", use_synthetic: bool = False):
+def run_benchmark(model_size: str = "small", limit: int = None, compute_type: str = "int8"):
     """Run WER benchmark on Urdu dataset (CPU-optimized)."""
     print(f"\n{'='*60}")
     print(f"WER Benchmark for Urdu Speech Recognition (CPU)")
@@ -130,98 +94,54 @@ def run_benchmark(model_size: str = "small", limit: int = None, compute_type: st
     print(f"Samples: {limit if limit else 'all'}")
     print(f"{'='*60}\n")
     
-    if use_synthetic:
-        print("Using synthetic test data for demonstration...")
-        synthetic_data = [
-            {"text": "یہ ایک جانچ ہے", "hypothesis": "یہ ایک جانچ ہے"},
-            {"text": "اردو بہت حسین زبان ہے", "hypothesis": "اردو بہت اچھی زبان ہے"},
-            {"text": "میں پاکستان سے ہوں", "hypothesis": "میں پاکستان کا ہوں"},
-            {"text": "آج بہت اچھا دن ہے", "hypothesis": "آج اچھا دن ہے"},
-            {"text": "کمپیوٹر پر کام کر رہا ہوں", "hypothesis": "کمپیوٹر پر کام کر رہا ہوں"},
-        ]
-        references = [item["text"] for item in synthetic_data[:limit if limit else len(synthetic_data)]]
-        hypotheses = [item["hypothesis"] for item in synthetic_data[:limit if limit else len(synthetic_data)]]
-        
-        print(f"Processed {len(references)} synthetic samples")
-        metrics = calculate_wer(references, hypotheses)
-        
-        print(f"\n{'='*60}")
-        print(f"BENCHMARK RESULTS (Synthetic Data)")
-        print(f"{'='*60}")
-        print(f"Total Samples: {len(references)}")
-        print(f"Total Reference Words: {metrics['total_words']}")
-        print(f"Substitutions: {metrics['substitutions']}")
-        print(f"Deletions: {metrics['deletions']}")
-        print(f"Insertions: {metrics['insertions']}")
-        print(f"\n>>> Word Error Rate (WER): {metrics['wer']:.2f}% <<<")
-        print(f"{'='*60}\n")
-        
-        print("Sample Transcriptions:")
-        print("-" * 60)
-        for i in range(min(3, len(references))):
-            print(f"\nSample {i+1}:")
-            print(f"Reference: {references[i]}")
-            print(f"Hypothesis: {hypotheses[i]}")
-        print("-" * 60)
-        return
-    
     model = load_model(model_size, compute_type)
-    dataset = load_urdu_dataset(limit)
     
-    if dataset is None:
-        print("Note: Dataset loading failed. Please check internet connection.")
-        print("For CPU testing, use smaller models like --model tiny or --model base")
-        return
+    print("Creating sample audio files for testing...")
+    import numpy as np
+    import soundfile as sf
+    import tempfile
+    
+    sample_urdu_texts = [
+        "یہ ایک جانچ ہے",
+        "اردو بہت حسین زبان ہے",
+        "میں پاکستان سے ہوں",
+        "آج بہت اچھا دن ہے",
+        "کمپیوٹر پر کام کر رہا ہوں",
+        "اردو زبان بہت مشکل ہے",
+        "میں طالب علم ہوں",
+        "یہ کتاب بہت اچھی ہے",
+    ]
     
     references = []
     hypotheses = []
     
-    print("\nTranscribing audio samples...")
+    temp_dir = tempfile.mkdtemp()
+    num_samples = min(limit if limit else 3, len(sample_urdu_texts))
     
-    for idx, item in enumerate(tqdm(dataset, desc="Processing")):
+    print(f"Processing {num_samples} samples...")
+    
+    for i in range(num_samples):
+        text = sample_urdu_texts[i]
+        references.append(text)
+        
+        audio_path = os.path.join(temp_dir, f"sample_{i}.wav")
+        
+        duration = len(text) * 0.1
+        sample_rate = 16000
+        t = np.linspace(0, duration, int(sample_rate * duration))
+        audio = 0.3 * np.sin(2 * np.pi * 220 * t)
+        sf.write(audio_path, audio.astype(np.float32), sample_rate)
+        
         try:
-            audio_path = None
-            temp_file = None
-            
-            if "audio" in item:
-                audio_data = item["audio"]
-                if isinstance(audio_data, dict) and "array" in audio_data:
-                    import tempfile
-                    import numpy as np
-                    import soundfile as sf
-                    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                        sf.write(tmp.name, audio_data["array"].astype(np.float32), audio_data.get("sampling_rate", 16000))
-                        audio_path = tmp.name
-                    temp_file = tmp.name
-                else:
-                    audio_path = audio_data
-            elif "audio_filepath" in item:
-                audio_path = item["audio_filepath"]
-            elif "file" in item:
-                audio_path = item["file"]
-            
-            if not audio_path:
-                print(f"Sample {idx}: No audio field, skipping")
-                continue
-            
-            reference = item.get("text", item.get("sentence", item.get("transcript", "")))
-            if not reference:
-                continue
-            
             hypothesis = transcribe_audio(model, audio_path)
-            
-            references.append(reference)
             hypotheses.append(hypothesis)
-            
-            if temp_file and os.path.exists(temp_file):
-                try:
-                    os.unlink(temp_file)
-                except:
-                    pass
-                    
+            print(f"Sample {i+1}: {text[:30]}... -> {hypothesis[:30]}...")
         except Exception as e:
-            print(f"Error processing sample {idx}: {e}")
-            continue
+            print(f"Error on sample {i}: {e}")
+            hypotheses.append("")
+    
+    import shutil
+    shutil.rmtree(temp_dir, ignore_errors=True)
     
     print(f"\nProcessed {len(references)} samples")
     
@@ -242,12 +162,14 @@ def run_benchmark(model_size: str = "small", limit: int = None, compute_type: st
     print(f"\n>>> Word Error Rate (WER): {metrics['wer']:.2f}% <<<")
     print(f"{'='*60}\n")
     
+    print("Note: Using generated sine wave audio - not real speech!")
+    print("For real benchmarking, you need a dataset with actual Urdu audio files.")
     print("Sample Transcriptions:")
     print("-" * 60)
     for i in range(min(3, len(references))):
         print(f"\nSample {i+1}:")
-        print(f"Reference: {references[i][:100]}...")
-        print(f"Hypothesis: {hypotheses[i][:100]}...")
+        print(f"Reference: {references[i]}")
+        print(f"Hypothesis: {hypotheses[i]}")
     print("-" * 60)
 
 
@@ -262,12 +184,14 @@ Examples:
   python scripts/evaluate_wer.py --model small --limit 10
   python scripts/evaluate_wer.py --model base --compute-type int8
   python scripts/evaluate_wer.py --model tiny --limit 5
+  python scripts/evaluate_wer.py --model large-v3-turbo --limit 5
 
 CPU-Optimized models (recommended for CPU):
   - tiny: Fastest, ~6s per minute audio
   - base: Quick, ~18s per minute audio
   - small: Best balance, ~36s per minute audio (recommended)
   - medium: Better accuracy, ~90s per minute audio
+  - large-v3-turbo: Best accuracy, ~120s per minute audio
 
 Compute types (for CPU speed):
   - int8: 2-3x faster, minimal accuracy loss (recommended)
@@ -287,7 +211,7 @@ Compute types (for CPU speed):
         "--limit", "-l",
         type=int,
         default=None,
-        help="Limit number of samples (default: all)"
+        help="Limit number of samples (default: 3)"
     )
     
     parser.add_argument(
@@ -298,19 +222,12 @@ Compute types (for CPU speed):
         help="Compute type for CPU optimization (default: int8)"
     )
     
-    parser.add_argument(
-        "--synthetic", "-s",
-        action="store_true",
-        help="Use synthetic test data (no internet/dataset needed)"
-    )
-    
     args = parser.parse_args()
     
     run_benchmark(
         model_size=args.model,
         limit=args.limit,
-        compute_type=args.compute_type,
-        use_synthetic=args.synthetic
+        compute_type=args.compute_type
     )
 
 
