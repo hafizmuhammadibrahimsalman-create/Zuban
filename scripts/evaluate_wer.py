@@ -27,9 +27,10 @@ def preprocess_urdu_text(text: str) -> str:
         return ""
     
     text = str(text).strip()
+    # Remove punctuations both English and Urdu
+    text = re.sub(r'[۔،؟؛:\.,\?!\'\"\-\(\)\[\]\{\}]', '', text)
+    # Remove any extra spaces
     text = re.sub(r'\s+', ' ', text)
-    text = re.sub(r'[^\w\s\u0600-\u06FF۔،؟ؤ ءآأؤإئابةتثجحخدذرزسشصضطظعغفقكلمنهوىيٱٲٳٴٵٶٷٸٹٺٻټٽپٿٹڈډڑژڙښڛڜڝڞڟڠڡڢڣڤڥڦڧڨکڪګڬڭڮڰڱڲڳڴڵڶڷڸڹںڻڼڽھڿۀہۂۃۄۅۆۇۈۉۊۋیۍێۏېۑےۓ۔ەۖۗۘۙۚۛۜ۝۞ۣ۟۠ۡۢۤۥۦۧۨ۩۪ۭ۫۬ۮۯ۰۱۲۳۴۵۶۷۸۹۝۔۔۔]',
-                  '', text)
     
     return text.strip()
 
@@ -72,12 +73,16 @@ def calculate_wer(references: list, hypotheses: list) -> dict:
     
     try:
         output = process_words(ref_filtered, hyp_filtered)
+        # jiwer output.references gives tokenized list of lists.
+        # We can calculate total ground-truth words manually or via sum of operation counts
+        total_ref_words = sum(len(r.split()) for r in ref_filtered)
+        
         return {
             "wer": output.wer * 100,
             "substitutions": output.substitutions,
             "deletions": output.deletions,
             "insertions": output.insertions,
-            "total_words": output.references
+            "total_words": total_ref_words
         }
     except Exception as e:
         print(f"Error calculating WER: {e}")
@@ -96,51 +101,58 @@ def run_benchmark(model_size: str = "small", limit: int = None, compute_type: st
     
     model = load_model(model_size, compute_type)
     
-    print("Creating sample audio files for testing...")
-    import numpy as np
-    import soundfile as sf
+    import subprocess
     import tempfile
-    
+    import os
+    import shutil
+
     sample_urdu_texts = [
-        "یہ ایک جانچ ہے",
-        "اردو بہت حسین زبان ہے",
-        "میں پاکستان سے ہوں",
-        "آج بہت اچھا دن ہے",
-        "کمپیوٹر پر کام کر رہا ہوں",
-        "اردو زبان بہت مشکل ہے",
-        "میں طالب علم ہوں",
-        "یہ کتاب بہت اچھی ہے",
+        "یہ ایک چھوٹا سا امتحان ہے۔",
+        "اردو ہماری قومی زبان ہے۔",
+        "میں روزانہ صبح سویرے اٹھتا ہوں۔",
+        "کمپیوٹر سائنس کا مستقبل بہت روشن ہے۔",
+        "آرٹیفیشل انٹیلیجنس نے دنیا کو بدل دیا ہے۔",
+        "مجھے کتابیں پڑھنا بہت پسند ہے۔",
+        "پاکستان کے شمال میں خوبصورت پہاڑ ہیں۔",
+        "محنت کامیابی کی کنجی ہے۔",
+        "آج موسم کیسا ہے؟",
+        "ہمیں دوسروں کی مدد کرنی چاہیے۔",
+        "وقت کی قدر کرنا سیکھیں۔",
+        "سافٹ ویئر انجینئرنگ ایک اچھا پیشہ ہے۔",
     ]
     
+    num_samples = min(limit if limit else 3, len(sample_urdu_texts))
+    print(f"Generating and testing {num_samples} real spoken audios using edge-tts...")
+
     references = []
     hypotheses = []
-    
+
     temp_dir = tempfile.mkdtemp()
-    num_samples = min(limit if limit else 3, len(sample_urdu_texts))
-    
-    print(f"Processing {num_samples} samples...")
     
     for i in range(num_samples):
         text = sample_urdu_texts[i]
         references.append(text)
         
-        audio_path = os.path.join(temp_dir, f"sample_{i}.wav")
+        audio_path = os.path.join(temp_dir, f"sample_{i}.mp3")
         
-        duration = len(text) * 0.1
-        sample_rate = 16000
-        t = np.linspace(0, duration, int(sample_rate * duration))
-        audio = 0.3 * np.sin(2 * np.pi * 220 * t)
-        sf.write(audio_path, audio.astype(np.float32), sample_rate)
-        
+        try:
+            # Generate high-quality Urdu speech dynamically
+            subprocess.run(["edge-tts", "--voice", "ur-PK-AsadNeural", "--text", text, "--write-media", audio_path], 
+                           check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            print(f"Sample {i+1}: Failed to generate audio -> {e}")
+            hypotheses.append("")
+            continue
+
         try:
             hypothesis = transcribe_audio(model, audio_path)
             hypotheses.append(hypothesis)
-            print(f"Sample {i+1}: {text[:30]}... -> {hypothesis[:30]}...")
+            print(f"Sample {i+1}: Ground Truth : {text[:50]}")
+            print(f"Sample {i+1}: Transcription: {hypothesis[:50]}")
         except Exception as e:
-            print(f"Error on sample {i}: {e}")
+            print(f"Error on sample {i+1}: {e}")
             hypotheses.append("")
     
-    import shutil
     shutil.rmtree(temp_dir, ignore_errors=True)
     
     print(f"\nProcessed {len(references)} samples")
@@ -162,9 +174,7 @@ def run_benchmark(model_size: str = "small", limit: int = None, compute_type: st
     print(f"\n>>> Word Error Rate (WER): {metrics['wer']:.2f}% <<<")
     print(f"{'='*60}\n")
     
-    print("Note: Using generated sine wave audio - not real speech!")
-    print("For real benchmarking, you need a dataset with actual Urdu audio files.")
-    print("Sample Transcriptions:")
+    print("For real benchmarking, consider using a larger dataset or different models.")
     print("-" * 60)
     for i in range(min(3, len(references))):
         print(f"\nSample {i+1}:")

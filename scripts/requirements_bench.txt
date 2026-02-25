@@ -7,3 +7,4 @@ soundfile
 librosa
 torch
 tqdm
+edge-tts
